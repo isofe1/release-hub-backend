@@ -1,0 +1,9 @@
+{
+  "name": "release-hub-backend",
+  "version": "1.0.0",
+  "description": "Vercel serverless proxy for GitHub Releases, used by the Release Hub Android app.",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
