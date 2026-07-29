@@ -1,21 +1,20 @@
-// api/release.js (Vercel Serverless Function)
-// GET /api/release?owner=<owner>&repo=<repo>
+// api/releases.js (Vercel Serverless Function)
+// GET /api/releases?owner=<owner>&repo=<repo>&per_page=10
 
 const NAME_PATTERN = /^[\w.-]+$/;
 
 export default async function handler(req, res) {
-  const { owner, repo } = req.query;
+  const { owner, repo, per_page = "10" } = req.query;
 
   if (!owner || !repo) {
     return res.status(400).json({ error: "Missing 'owner' or 'repo' parameter", code: 400 });
   }
-
-  // Basic validation so we never interpolate junk into the GitHub URL
   if (!NAME_PATTERN.test(owner) || !NAME_PATTERN.test(repo)) {
     return res.status(400).json({ error: "Invalid 'owner' or 'repo' parameter", code: 400 });
   }
 
-  // Enable CORS & Vercel Edge Cache (cache response for 5 mins to save GitHub rate limit)
+  const perPageNum = clampInt(per_page, 10, 1, 50);
+
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
@@ -29,58 +28,47 @@ export default async function handler(req, res) {
     "User-Agent": "ReleaseHub-VercelProxy/1.0",
     "Accept": "application/vnd.github.v3+json",
   };
-
   if (githubToken) {
     headers["Authorization"] = `Bearer ${githubToken}`;
   }
 
   try {
-    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-    let response = await fetch(apiUrl, { headers });
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${perPageNum}`;
+    const response = await fetch(apiUrl, { headers });
 
-    // Fallback to releases list if there is no "latest" tag defined
     if (response.status === 404) {
-      const listUrl = `https://api.github.com/repos/${owner}/${repo}/releases`;
-      const listResponse = await fetch(listUrl, { headers });
-
-      if (listResponse.ok) {
-        const list = await listResponse.json();
-        if (Array.isArray(list) && list.length > 0) {
-          return res.status(200).json(formatRelease(list[0], owner, repo));
-        }
-        return res.status(404).json({ error: "المستودع غير موجود أو لا يحتوي على إصدارات رسمية", code: 404 });
-      }
-
-      response = listResponse;
+      return res.status(404).json({
+        error: "المستودع غير موجود أو لا يحتوي على إصدارات رسمية",
+        code: 404,
+      });
     }
 
     if (!response.ok) {
-      // Pass through GitHub's rate-limit info so the app/client can react sensibly
       const retryAfter = response.headers.get("retry-after");
-      const rateRemaining = response.headers.get("x-ratelimit-remaining");
-      const rateReset = response.headers.get("x-ratelimit-reset");
-
       if (retryAfter) res.setHeader("Retry-After", retryAfter);
-      if (rateRemaining) res.setHeader("X-RateLimit-Remaining", rateRemaining);
-      if (rateReset) res.setHeader("X-RateLimit-Reset", rateReset);
-
       return res.status(response.status).json({
         error: `GitHub API responded with ${response.status}`,
         code: response.status,
       });
     }
 
-    const data = await response.json();
-    return res.status(200).json(formatRelease(data, owner, repo));
+    const list = await response.json();
+    if (!Array.isArray(list)) {
+      return res.status(502).json({ error: "Unexpected response from GitHub", code: 502 });
+    }
+
+    return res.status(200).json({
+      owner,
+      repo,
+      releases: list.map((data) => formatRelease(data)),
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Internal Server Error", code: 500 });
   }
 }
 
-function formatRelease(data, owner, repo) {
+function formatRelease(data) {
   return {
-    owner,
-    repo,
     tag_name: data.tag_name || "latest",
     name: data.name || data.tag_name || "Latest Release",
     published_at: data.published_at || null,
@@ -94,4 +82,10 @@ function formatRelease(data, owner, repo) {
       content_type: asset.content_type || "application/octet-stream",
     })),
   };
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
 }
