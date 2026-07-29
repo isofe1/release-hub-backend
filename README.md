@@ -34,6 +34,17 @@ Response:
 }
 ```
 
+### `GET /api/releases?owner=<owner>&repo=<repo>&per_page=10`
+Returns a list of recent releases (not just the latest).
+
+### `GET /api/search?q=<query>&page=1&per_page=20&sort=stars`
+Searches GitHub repositories. `sort` accepts `stars`, `updated`, or omit for
+best-match (GitHub's relevance ranking).
+
+Note: GitHub's search API does not return release/tag info per repo, so the
+search results do not include `latest_tag` or `has_releases` — fetch that
+separately via `/api/release` once the user taps into a specific repo.
+
 ### `GET /api/health`
 Quick check that the deployment is live and the token is configured.
 
